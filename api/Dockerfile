@@ -9,6 +9,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev
 
-COPY api/app.py ./api_app.py
+COPY api/ ./api/
 
-CMD ["/app/.venv/bin/uvicorn", "api_app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/.venv/bin/uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
