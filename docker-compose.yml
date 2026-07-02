@@ -1,0 +1,22 @@
+services:
+  back:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: proxmox-back
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Tokyo
+
+  front:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: proxmox-front
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - back

@@ -1,0 +1,11 @@
+
+[project]
+name = "proxmox-monitor"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "proxmoxer==2.0.1",
+    "requests==2.32.3",
+    "fastapi==0.115.5",
+    "uvicorn[standard]==0.32.1",
+]
