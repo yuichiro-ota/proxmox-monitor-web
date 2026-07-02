@@ -10,6 +10,24 @@
           {{ report ? `更新: ${report.collected_at}` : '読み込み中...' }}
         </span>
         <span class="countdown">次の更新まで {{ countdown }}s</span>
+
+        <label
+          class="notify-toggle"
+          :class="{ 'no-webhook': !webhookConfigured }"
+          :title="notifyTitle"
+        >
+          <span class="notify-icon">🔔</span>
+          <input
+            type="checkbox"
+            :checked="notifyEnabled"
+            :disabled="!webhookConfigured"
+            @change="toggleNotify"
+          />
+          <span class="toggle-track">
+            <span class="toggle-thumb"></span>
+          </span>
+        </label>
+
         <button class="refresh-btn" @click="refresh" :disabled="loading">
           <span v-if="loading">...</span>
           <span v-else>↻ 更新</span>
@@ -30,16 +48,23 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import NodeCard from './components/NodeCard.vue'
 
 const report = ref(null)
 const loading = ref(false)
 const error = ref(null)
-const countdown = ref(10)
+const countdown = ref(60)
+const notifyEnabled = ref(false)
+const webhookConfigured = ref(false)
 
 let pollTimer = null
 let countdownTimer = null
+
+const notifyTitle = computed(() => {
+  if (!webhookConfigured.value) return 'GOOGLE_CHAT_WEBHOOK_URL が未設定です'
+  return notifyEnabled.value ? '通知: 有効 (クリックで無効化)' : '通知: 無効 (クリックで有効化)'
+})
 
 async function refresh() {
   loading.value = true
@@ -48,7 +73,7 @@ async function refresh() {
     const res = await fetch('/api/latest')
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     report.value = await res.json()
-    countdown.value = 10
+    countdown.value = 60
   } catch (e) {
     error.value = `取得失敗: ${e.message}`
   } finally {
@@ -56,9 +81,29 @@ async function refresh() {
   }
 }
 
+async function fetchNotifyStatus() {
+  try {
+    const res = await fetch('/api/notify/status')
+    if (!res.ok) return
+    const data = await res.json()
+    notifyEnabled.value = data.enabled
+    webhookConfigured.value = data.webhook_configured
+  } catch (_) {}
+}
+
+async function toggleNotify() {
+  try {
+    const res = await fetch('/api/notify/toggle', { method: 'POST' })
+    if (!res.ok) return
+    const data = await res.json()
+    notifyEnabled.value = data.enabled
+  } catch (_) {}
+}
+
 onMounted(() => {
   refresh()
-  pollTimer = setInterval(refresh, 10_000)
+  fetchNotifyStatus()
+  pollTimer = setInterval(refresh, 60_000)
   countdownTimer = setInterval(() => {
     if (countdown.value > 0) countdown.value--
   }, 1_000)
