@@ -8,12 +8,12 @@
 
     <template v-if="running">
       <div class="chip-bar">
-        <span class="cl">C</span>
+        <span class="cl">CPU</span>
         <span class="tk"><span class="fl" :style="{ width: clamp(cpuPct) + '%', background: color(cpuPct) }"></span></span>
         <span class="cv">{{ Math.round(cpuPct) }}%</span>
       </div>
       <div class="chip-bar">
-        <span class="cl">M</span>
+        <span class="cl">MEM</span>
         <span class="tk"><span class="fl" :style="{ width: clamp(memPct) + '%', background: color(memPct) }"></span></span>
         <span class="cv">{{ Math.round(memPct) }}%</span>
       </div>
@@ -105,14 +105,16 @@ const tip = computed(() => {
 }
 
 .cl {
-  font-size: 0.55rem;
+  font-size: 0.58rem;
   color: var(--text-muted);
-  width: 8px;
+  width: 26px;
+  letter-spacing: 0.02em;
   flex-shrink: 0;
 }
 
 .tk {
   flex: 1;
+  max-width: 96px;
   height: 3px;
   background: var(--surface);
   border-radius: 2px;
