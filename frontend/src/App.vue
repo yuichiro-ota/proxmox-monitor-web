@@ -38,8 +38,8 @@
     <div v-if="error" class="state-message error">{{ error }}</div>
     <div v-else-if="!report" class="state-message">データを取得中...</div>
 
-    <div v-else class="topo-scroll">
-      <div class="topo">
+    <div v-else class="topo-scale" ref="scaleWrap">
+      <div class="topo" ref="topoEl">
         <!-- Router -->
         <div class="topo-center">
           <TopoBox
@@ -74,13 +74,17 @@
                 <div class="tree-node" v-for="node in grp.nodes" :key="node.node">
                   <div class="node-col">
                     <NodeCard :node="node" />
-                    <div class="tree-row guest-row" v-if="guestsOf(node).length">
-                      <div
-                        class="tree-node"
-                        v-for="g in guestsOf(node)"
-                        :key="`${g.kind}-${g.data.vmid}`"
-                      >
-                        <GuestCard :guest="g.data" :kind="g.kind" />
+                    <!-- VM/LXC を1枚のパネルにまとめて表示 -->
+                    <div class="tree-row" v-if="guestsOf(node).length">
+                      <div class="tree-node">
+                        <div class="guest-panel">
+                          <GuestChip
+                            v-for="g in guestsOf(node)"
+                            :key="`${g.kind}-${g.data.vmid}`"
+                            :guest="g.data"
+                            :kind="g.kind"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -102,9 +106,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import NodeCard from './components/NodeCard.vue'
-import GuestCard from './components/GuestCard.vue'
+import GuestChip from './components/GuestChip.vue'
 import HostCard from './components/HostCard.vue'
 import TopoBox from './components/TopoBox.vue'
 import GroupHeader from './components/GroupHeader.vue'
@@ -146,6 +150,23 @@ const groups = computed(() => {
 
 let pollTimer = null
 let countdownTimer = null
+
+// --- ウィンドウ幅に合わせて系統図全体を自動スケール（横スクロール回避） ---
+const scaleWrap = ref(null)
+const topoEl = ref(null)
+
+function fitScale() {
+  const wrap = scaleWrap.value
+  const topo = topoEl.value
+  if (!wrap || !topo) return
+  topo.style.transform = 'none'
+  const avail = wrap.clientWidth
+  const natural = topo.offsetWidth // transform は offsetWidth に影響しない
+  const scale = natural > avail ? avail / natural : 1
+  topo.style.transform = scale < 1 ? `scale(${scale})` : 'none'
+  // 縮小後の高さに合わせてラッパー高さを詰める（余白を残さない）
+  wrap.style.height = topo.offsetHeight * scale + 'px'
+}
 
 const notifyTitle = computed(() => {
   if (!webhookConfigured.value) return 'GOOGLE_CHAT_WEBHOOK_URL が未設定です'
@@ -197,6 +218,9 @@ async function toggleNotify() {
   } catch (_) {}
 }
 
+// レポート更新でカード数が変わったら再フィット
+watch(report, () => nextTick(fitScale))
+
 onMounted(() => {
   refresh()
   fetchNotifyStatus()
@@ -204,29 +228,35 @@ onMounted(() => {
   countdownTimer = setInterval(() => {
     if (countdown.value > 0) countdown.value--
   }, 1_000)
+
+  window.addEventListener('resize', fitScale)
+  nextTick(fitScale)
 })
 
 onUnmounted(() => {
   clearInterval(pollTimer)
   clearInterval(countdownTimer)
+  window.removeEventListener('resize', fitScale)
 })
 </script>
 
 <style scoped>
-/* Horizontal scroll wrapper for wide trees */
-.topo-scroll {
-  overflow-x: auto;
-  padding-bottom: 8px;
+/* Auto-scale wrapper: fits the whole tree to the window width (no h-scroll) */
+.topo-scale {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
 }
 
 .topo {
   width: fit-content;
-  min-width: 100%;
-  margin-inline: auto;
+  transform-origin: top center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 24px 48px;
+  padding: 8px 24px 24px;
 }
 
 /* Centered spine element */
@@ -322,16 +352,22 @@ onUnmounted(() => {
 .tree-node:only-child::before { display: none; }
 .tree-node:only-child::after { border-top: 0; }
 
-/* ---- Node column: node card + its horizontal guest branch ---- */
+/* ---- Node column: node card + its consolidated guest panel ---- */
 .node-col {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-/* tighter spacing for the guest branch */
-.guest-row > .tree-node {
-  padding-left: 8px;
-  padding-right: 8px;
+/* VM/LXC を1枚にまとめたコンパクトなパネル（ノードと同じ幅） */
+.guest-panel {
+  width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 </style>
