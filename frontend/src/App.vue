@@ -252,8 +252,13 @@ onUnmounted(() => {
 
 /* ---- Group branch (segment -> cluster / on-prem groups) ---- */
 .group-row {
-  gap: 56px;
   align-items: flex-start;
+}
+
+/* wider spacing between top-level groups */
+.group-row > .tree-node {
+  padding-left: 28px;
+  padding-right: 28px;
 }
 
 .group-col {
@@ -262,56 +267,60 @@ onUnmounted(() => {
   align-items: center;
 }
 
-/* ---- Node branch (one parent -> many nodes) ---- */
+/* ---- Tree connectors (one parent -> a row of children) ----
+   The horizontal bus is drawn as two half-lines that meet at each child's
+   centre, so it connects sibling centres correctly even when the columns
+   have very different widths. Spacing between siblings comes from the
+   child padding (not flex-gap) so the bus has no breaks. */
 .tree-row {
   display: flex;
   justify-content: center;
-  gap: 28px;
-  padding-top: 24px;
+  padding-top: 20px;
   position: relative;
 }
 
-/* parent drop from the cluster header down to the bus */
+/* vertical drop from the parent down to the bus */
 .tree-row::before {
   content: '';
   position: absolute;
   top: 0;
   left: 50%;
-  width: 1px;
-  height: 12px;
-  background: var(--border);
+  width: 0;
+  height: 20px;
+  border-left: 1px solid var(--border);
 }
 
 .tree-node {
   position: relative;
-  padding-top: 12px;
+  padding: 20px 14px 0;
 }
 
-/* horizontal bus line */
-.tree-node::before {
-  content: '';
-  position: absolute;
-  top: 12px;
-  left: -14px;
-  right: -14px;
-  height: 1px;
-  background: var(--border);
-}
-
-/* up-stub from bus to the node card */
+/* two horizontal half-lines forming the bus */
+.tree-node::before,
 .tree-node::after {
   content: '';
   position: absolute;
-  top: 12px;
-  left: 50%;
-  width: 1px;
-  height: 12px;
-  background: var(--border);
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 20px;
+  border-top: 1px solid var(--border);
 }
 
-.tree-node:first-child::before { left: 50%; }
-.tree-node:last-child::before { right: 50%; }
+/* the right half also carries the vertical stub down to the child */
+.tree-node::after {
+  right: auto;
+  left: 50%;
+  border-left: 1px solid var(--border);
+}
+
+/* trim the bus outside the first / last child */
+.tree-node:first-child::before { border-top-color: transparent; }
+.tree-node:last-child::after { border-top-color: transparent; }
+
+/* single child: a straight vertical line, no horizontal bus */
 .tree-node:only-child::before { display: none; }
+.tree-node:only-child::after { border-top: 0; }
 
 /* ---- Node column: node card + its horizontal guest branch ---- */
 .node-col {
@@ -320,8 +329,9 @@ onUnmounted(() => {
   align-items: center;
 }
 
-/* guest branch reuses the same connector mechanism, with a tighter gap */
-.guest-row {
-  gap: 16px;
+/* tighter spacing for the guest branch */
+.guest-row > .tree-node {
+  padding-left: 8px;
+  padding-right: 8px;
 }
 </style>
