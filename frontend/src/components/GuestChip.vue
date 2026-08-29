@@ -1,9 +1,23 @@
 <template>
   <div class="guest-chip" :class="{ stopped: !running }" :title="tip">
-    <span class="dot" :class="running ? 'on' : 'off'"></span>
-    <Icon :name="kind === 'lxc' ? 'container' : 'vm'" :size="12" class="ic" />
-    <span class="name">{{ guest.name }}</span>
-    <span v-if="running" class="cpu">{{ Math.round(guest.cpu_usage_pct) }}%</span>
+    <div class="chip-head">
+      <span class="dot" :class="running ? 'on' : 'off'"></span>
+      <Icon :name="kind === 'lxc' ? 'container' : 'vm'" :size="12" class="ic" />
+      <span class="name">{{ guest.name }}</span>
+    </div>
+
+    <template v-if="running">
+      <div class="chip-bar">
+        <span class="cl">C</span>
+        <span class="tk"><span class="fl" :style="{ width: clamp(cpuPct) + '%', background: color(cpuPct) }"></span></span>
+        <span class="cv">{{ Math.round(cpuPct) }}%</span>
+      </div>
+      <div class="chip-bar">
+        <span class="cl">M</span>
+        <span class="tk"><span class="fl" :style="{ width: clamp(memPct) + '%', background: color(memPct) }"></span></span>
+        <span class="cv">{{ Math.round(memPct) }}%</span>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -17,6 +31,19 @@ const props = defineProps({
 })
 
 const running = computed(() => props.guest.status === 'running')
+const cpuPct = computed(() => props.guest.cpu_usage_pct || 0)
+const memPct = computed(() => {
+  const max = props.guest.memory?.max_gb || 0
+  const used = props.guest.memory?.used_gb || 0
+  return max > 0 ? (used / max) * 100 : 0
+})
+
+function clamp(v) { return Math.min(Math.max(v, 0), 100) }
+function color(pct) {
+  if (pct >= 80) return 'var(--red)'
+  if (pct >= 60) return 'var(--yellow)'
+  return 'var(--green)'
+}
 
 const tip = computed(() => {
   const g = props.guest
@@ -29,17 +56,25 @@ const tip = computed(() => {
 <style scoped>
 .guest-chip {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 7px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  font-size: 0.72rem;
-  min-width: 0;
+  cursor: pointer;
+  transition: border-color 0.15s;
 }
 
+.guest-chip:hover { border-color: var(--accent); }
 .guest-chip.stopped { opacity: 0.5; }
+
+.chip-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
 
 .dot {
   width: 6px;
@@ -60,11 +95,43 @@ const tip = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
+  font-size: 0.72rem;
 }
 
-.cpu {
+.chip-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cl {
+  font-size: 0.55rem;
+  color: var(--text-muted);
+  width: 8px;
+  flex-shrink: 0;
+}
+
+.tk {
+  flex: 1;
+  height: 3px;
+  background: var(--surface);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.fl {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  min-width: 1px;
+}
+
+.cv {
+  font-size: 0.55rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  width: 24px;
+  text-align: right;
   flex-shrink: 0;
 }
 </style>

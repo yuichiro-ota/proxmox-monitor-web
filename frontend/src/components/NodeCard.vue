@@ -88,6 +88,7 @@ function storageColor(pct) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  cursor: pointer;
   transition: border-color 0.2s;
 }
 

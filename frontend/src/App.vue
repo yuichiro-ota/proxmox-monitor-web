@@ -73,7 +73,7 @@
               <div class="tree-row" v-if="grp.type === 'proxmox'">
                 <div class="tree-node" v-for="node in grp.nodes" :key="node.node">
                   <div class="node-col">
-                    <NodeCard :node="node" />
+                    <NodeCard :node="node" @click="openDetail('node', node)" />
                     <!-- VM/LXC を1枚のパネルにまとめて表示 -->
                     <div class="tree-row" v-if="guestsOf(node).length">
                       <div class="tree-node">
@@ -83,6 +83,7 @@
                             :key="`${g.kind}-${g.data.vmid}`"
                             :guest="g.data"
                             :kind="g.kind"
+                            @click="openDetail('guest', g.data, g.kind)"
                           />
                         </div>
                       </div>
@@ -94,7 +95,7 @@
               <!-- On-prem host cards -->
               <div class="tree-row" v-else-if="grp.type === 'onprem'">
                 <div class="tree-node" v-for="h in grp.hosts" :key="h.ip">
-                  <HostCard :host="h" />
+                  <HostCard :host="h" @click="openDetail('host', h)" />
                 </div>
               </div>
             </div>
@@ -102,6 +103,14 @@
         </div>
       </div>
     </div>
+
+    <DetailModal
+      v-if="selected"
+      :type="selected.type"
+      :data="selected.data"
+      :kind="selected.kind"
+      @close="selected = null"
+    />
   </div>
 </template>
 
@@ -112,6 +121,7 @@ import GuestChip from './components/GuestChip.vue'
 import HostCard from './components/HostCard.vue'
 import TopoBox from './components/TopoBox.vue'
 import GroupHeader from './components/GroupHeader.vue'
+import DetailModal from './components/DetailModal.vue'
 import { topology } from './topology'
 
 const report = ref(null)
@@ -120,6 +130,12 @@ const error = ref(null)
 const countdown = ref(60)
 const notifyEnabled = ref(false)
 const webhookConfigured = ref(false)
+
+// クリックした対象の詳細モーダル
+const selected = ref(null)
+function openDetail(type, data, kind) {
+  selected.value = { type, data, kind }
+}
 
 const router = topology.router
 const segments = topology.segments

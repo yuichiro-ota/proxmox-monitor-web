@@ -67,6 +67,7 @@ const osLabel = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  cursor: pointer;
   transition: border-color 0.2s;
 }
 
