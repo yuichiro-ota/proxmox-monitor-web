@@ -14,22 +14,24 @@
 # target: scrape 先アドレス（省略時は ip）。表示は ip のまま、収集先だけ
 #   変えたいときに使う。例: 監視スタックを監視対象と同じ PC の WSL 上で
 #   動かす場合、コンテナから Windows ホストへ届く host.docker.internal を指定：
-#     ip = "192.168.3.3"          # 系統図の表示用
+#     ip = "192.168.1.20"         # 系統図の表示用（実際のIPに変更）
 #     target = "host.docker.internal"
 #   （通常は別マシンから監視するので target は不要）
+#
+# ★ 以下の値はプレースホルダーです。実際の環境に合わせて書き換えてください。
 # ---------------------------------------------------------------------------
 
 [[host]]
-ip = "192.168.3.3"
-hostname = "WIN-DESK01"   # 実際のPC名（任意）
-display = "Main PC"       # 系統図に表示する名前
+ip = "192.168.1.20"          # 監視対象PCのIP
+hostname = "my-desktop"      # 実際のPC名（任意）
+display = "Main PC"          # 系統図に表示する名前
 os = "windows"
 # port = 9182
 # target = "host.docker.internal"   # 同一PCのWSLで動かす場合に有効化
 group = "オンプレサーバー"
 
 # [[host]]
-# ip = "192.168.3.50"
+# ip = "192.168.1.30"
 # hostname = "ubuntu-srv"
 # display = "ファイルサーバー"
 # os = "linux"

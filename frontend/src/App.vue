@@ -151,7 +151,7 @@
     />
 
     <!-- VRM アバター（系統図の前面に表示） -->
-    <Avatar :message="avatarMessage" :alert="hasAnomaly" />
+    <Avatar :message="avatarBubble" :alert="hasAnomaly" />
   </div>
 </template>
 
@@ -173,6 +173,10 @@ import { topology } from './topology'
 const CPU_WARN = 85
 const MEM_WARN = 85
 
+// アバターのセリフ(Ollama)を取り直す間隔と、吹き出しの表示時間
+const AVATAR_SAY_INTERVAL = 180_000 // 3分ごとに新しいセリフを生成
+const AVATAR_SAY_DURATION = 15_000  // 生成後に吹き出しを出しておく時間
+
 const report = ref(null)
 const loading = ref(false)
 const error = ref(null)
@@ -182,6 +186,10 @@ const webhookConfigured = ref(false)
 
 // 表示ビュー: 'topo'（系統図） / 'detail'（詳細一覧）
 const view = ref('topo')
+
+// アバターのセリフ(Ollama生成)
+const chatMessage = ref(null)
+const ollamaConfigured = ref(false)
 
 // クリックした対象の詳細モーダル
 const selected = ref(null)
@@ -344,8 +352,54 @@ const avatarMessage = computed(() => {
   return `サーバー落ちました！\n(${who})`
 })
 
+// 実際に吹き出しへ出す内容: 異常時はアラートを最優先、平常時は Ollama のセリフ
+const avatarBubble = computed(() =>
+  hasAnomaly.value ? avatarMessage.value : chatMessage.value
+)
+
+// Ollama へ渡す現在の監視状況（セリフの素材）
+function avatarContext() {
+  const parts = tiles.value.map(t => `${t.label} ${t.value}/${t.total}`)
+  parts.push(warnings.value.length
+    ? '警告: ' + warnings.value.map(w => w.text).join(' / ')
+    : '異常なし')
+  return parts.join('、')
+}
+
 let pollTimer = null
 let countdownTimer = null
+let sayTimer = null
+let sayHideTimer = null
+
+// Ollama にセリフを生成させ、一定時間だけ吹き出しに表示
+async function fetchAvatarSay() {
+  if (!ollamaConfigured.value || hasAnomaly.value) return
+  try {
+    const res = await fetch('/api/avatar/say', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: avatarContext() }),
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.message) {
+      chatMessage.value = data.message
+      clearTimeout(sayHideTimer)
+      sayHideTimer = setTimeout(() => { chatMessage.value = null }, AVATAR_SAY_DURATION)
+    }
+  } catch (_) {}
+}
+
+// Ollama が使えるか確認し、使えれば定期生成を開始
+async function initAvatarSay() {
+  try {
+    const res = await fetch('/api/avatar/status')
+    if (res.ok) ollamaConfigured.value = (await res.json()).configured
+  } catch (_) {}
+  if (!ollamaConfigured.value) return
+  sayTimer = setInterval(fetchAvatarSay, AVATAR_SAY_INTERVAL)
+  setTimeout(fetchAvatarSay, 5000) // 初回は起動直後に一度
+}
 
 // --- ウィンドウ幅に合わせて系統図全体を自動スケール（横スクロール回避） ---
 const scaleWrap = ref(null)
@@ -423,6 +477,7 @@ watch(view, v => { if (v === 'topo') nextTick(fitScale) })
 onMounted(() => {
   refresh()
   fetchNotifyStatus()
+  initAvatarSay()
   pollTimer = setInterval(refresh, 60_000)
   countdownTimer = setInterval(() => {
     if (countdown.value > 0) countdown.value--
@@ -435,6 +490,8 @@ onMounted(() => {
 onUnmounted(() => {
   clearInterval(pollTimer)
   clearInterval(countdownTimer)
+  clearInterval(sayTimer)
+  clearTimeout(sayHideTimer)
   window.removeEventListener('resize', fitScale)
 })
 </script>

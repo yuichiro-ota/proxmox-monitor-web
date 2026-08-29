@@ -37,7 +37,7 @@ cp .env.example .env
 `.env` を編集：
 
 ```env
-PROXMOX_HOST=192.168.100.40       # ProxmoxのIPまたはFQDN (https://不要)
+PROXMOX_HOST=192.168.1.10         # ProxmoxのIPまたはFQDN (https://不要) ※実際の値に変更
 PROXMOX_USER=monitor@pve          # ユーザー (user@realm 形式)
 PROXMOX_TOKEN_NAME=monitoring     # APIトークン名
 PROXMOX_TOKEN_VALUE=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
@@ -81,7 +81,7 @@ docker compose up -d --build
 | ネットワーク機器 | 台数（ルーター） | 常に緑（※後述） |
 | VM / LXC | 稼働ゲスト / 全ゲスト | 「稼働→停止」に落ちたゲストがある |
 
-> ネットワーク機器（SoftBank Air）は死活監視に対応していないため、常に緑（静的表示）です。YAMAHA(RTX)等に変更する際は死活監視を実装してください（`frontend/src/topology.js`）。
+> ネットワーク機器（ルーター）は死活監視に対応しない機器の場合、常に緑（静的表示）です。SNMP等で死活監視できる機器に変更する際は監視処理を実装してください（`frontend/src/topology.js`）。
 
 ### 系統図ビュー
 
@@ -121,6 +121,34 @@ docker compose up -d --build
 - 通常はアイドル動作（呼吸・まばたき）。
 - **ダウン（重大警告）が発生すると**、心配顔になり吹き出しに「**サーバー落ちました！**」＋対象名を表示します（高負荷など警告レベルでは吹き出しは出ません）。
 - ※ 将来的にアバターのボイス再生を実装予定。
+
+### アバターのセリフ生成（Ollama）
+
+平常時（ダウンが無いとき）は、**Ollama** に現在の監視状況を渡して短い日本語コメントを生成し、吹き出しに定期表示します（既定: 3分ごとに生成、15秒間表示）。ダウン発生時は「サーバー落ちました！」のアラートが最優先されます。
+
+処理経路は `フロント → バックエンド /api/avatar/say → Ollama` です（ブラウザから直接叩かないので CORS 不要、接続先はサーバー側の環境変数で一元管理）。
+
+接続先は `.env` で設定します（**後から別PCのIPに変更するときはここを書き換えるだけ**）:
+
+```env
+OLLAMA_URL=http://<OllamaのPCのIP>:11434   # Ollama が動くPCのIP:ポート
+OLLAMA_MODEL=<pull済みモデル名>             # 例: llama3.2 / gemma3 / qwen2.5
+```
+
+（両方設定したときのみ有効。未設定ならセリフ機能はオフで、監視には影響しません）
+
+**Ollama 側の準備（重要）**
+
+- 監視スタックとは別ホストの Ollama を使う場合、Ollama を **全インターフェースで待ち受け**させる必要があります。
+  - Windows: 環境変数 `OLLAMA_HOST=0.0.0.0` を設定して Ollama を再起動。
+  - ファイアウォールで **11434/TCP のインバウンドを許可**（windows_exporter の 9182 と同様）:
+    ```powershell
+    New-NetFirewallRule -DisplayName "ollama 11434" -Direction Inbound -Protocol TCP -LocalPort 11434 -Action Allow -Profile Any
+    ```
+- 使うモデルを事前に pull しておく: `ollama pull llama3.2`
+- 未設定・未起動でも致命的にはならず、その場合は吹き出しのセリフが出ないだけです（監視機能には影響しません）。
+
+生成間隔・表示時間はフロントの `frontend/src/App.vue` の `AVATAR_SAY_INTERVAL` / `AVATAR_SAY_DURATION` で調整できます。
 
 ## オンプレサーバー監視（node_exporter / windows_exporter）
 

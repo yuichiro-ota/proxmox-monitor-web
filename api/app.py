@@ -3,10 +3,12 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .avatar import OLLAMA_MODEL, OLLAMA_URL, generate_say
+from .avatar import is_configured as ollama_configured
 from .collector import fetch_report
 from .notifier import is_configured, send_anomaly, send_scheduled, send_startup
 from .scheduler import init as scheduler_init, shutdown as scheduler_shutdown
@@ -106,6 +108,22 @@ def toggle_notify():
             log.error("Failed to send activation notification: %s", exc)
 
     return {"enabled": app_state.notify_enabled}
+
+
+@app.get("/api/avatar/status")
+def avatar_status():
+    """アバターのセリフ生成(Ollama)が使えるか。フロントはこれを見て定期取得する。"""
+    return {"configured": ollama_configured(), "url": OLLAMA_URL, "model": OLLAMA_MODEL}
+
+
+@app.post("/api/avatar/say")
+def avatar_say(payload: dict = Body(default={})):
+    """監視状況(context)を踏まえた短いセリフを Ollama で生成して返す。"""
+    context = str(payload.get("context", ""))[:500]
+    message = generate_say(context)
+    if not message:
+        raise HTTPException(status_code=503, detail="Ollama unavailable")
+    return {"message": message}
 
 
 if STATIC_DIR.exists():
