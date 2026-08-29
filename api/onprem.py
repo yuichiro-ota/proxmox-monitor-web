@@ -46,6 +46,9 @@ def load_hosts(path: str = DEFAULT_CONFIG) -> list[dict]:
         os_name = str(h.get("os", "linux")).lower()
         hosts.append({
             "ip": h["ip"],
+            # scrape 先アドレス。省略時は ip。監視サーバーと同一ホストを
+            # WSL 等で監視する場合に host.docker.internal 等へ差し替える。
+            "target": h.get("target", h["ip"]),
             "hostname": h.get("hostname", h["ip"]),
             "display": h.get("display", h.get("hostname", h["ip"])),
             "os": os_name,
@@ -170,7 +173,7 @@ def scrape_host(host: dict) -> dict:
         "ip": host["ip"],
         "os": host["os"],
     }
-    url = f"http://{host['ip']}:{host['port']}/metrics"
+    url = f"http://{host['target']}:{host['port']}/metrics"
     try:
         text0 = requests.get(url, timeout=HTTP_TIMEOUT).text
         time.sleep(CPU_SAMPLE_GAP)

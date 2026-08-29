@@ -14,6 +14,10 @@ services:
       # オンプレ監視の設定フォルダ（編集可能）。
       # config/hosts.toml.example をコピーして config/hosts.toml を作成する。
       - ./config:/app/config
+    # 監視スタックと同じホスト(WSL 等)を監視する場合に host.docker.internal で
+    # ホスト側へ到達できるようにする（Docker Engine 用。Docker Desktop は既定で有効）。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   front:
     build:
