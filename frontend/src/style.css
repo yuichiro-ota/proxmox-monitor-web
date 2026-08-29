@@ -105,6 +105,8 @@ body {
 
 .state-message.error { color: var(--red); }
 
+/* Topology scroll container is styled in App.vue */
+
 /* Notification toggle */
 .notify-toggle {
   display: flex;
@@ -157,11 +159,4 @@ body {
 .notify-toggle input:checked ~ .toggle-track .toggle-thumb {
   transform: translateX(16px);
   background: var(--accent);
-}
-
-/* Node grid */
-.nodes-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 20px;
 }

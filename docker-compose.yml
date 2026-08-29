@@ -9,6 +9,11 @@ services:
       - .env
     environment:
       - TZ=Asia/Tokyo
+      - ONPREM_CONFIG=/app/config/hosts.toml
+    volumes:
+      # オンプレ監視の設定フォルダ（編集可能）。
+      # config/hosts.toml.example をコピーして config/hosts.toml を作成する。
+      - ./config:/app/config
 
   front:
     build:

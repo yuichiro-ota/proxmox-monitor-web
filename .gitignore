@@ -1,4 +1,5 @@
 .env
+config/hosts.toml
 __pycache__/
 *.pyc
 .venv/

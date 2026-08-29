@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from proxmoxer import ProxmoxAPI
 
 from .client import build_client
+from .onprem import collect_onprem
 from .utils import to_gb, pct, SECONDS_PER_HOUR
 
 log = logging.getLogger(__name__)
@@ -102,5 +103,10 @@ def fetch_report() -> dict:
         node_data["vms"] = collect_vms(px, name)
         node_data["lxc"] = collect_lxc(px, name)
         node_data["storage"] = collect_storage(px, name)
-    log.info("Fetched %d node(s)", len(nodes))
-    return {"collected_at": now, "nodes": nodes}
+    try:
+        onprem_groups = collect_onprem()
+    except Exception as exc:
+        log.error("On-prem collection failed: %s", exc)
+        onprem_groups = []
+    log.info("Fetched %d node(s), %d on-prem group(s)", len(nodes), len(onprem_groups))
+    return {"collected_at": now, "nodes": nodes, "onprem_groups": onprem_groups}
