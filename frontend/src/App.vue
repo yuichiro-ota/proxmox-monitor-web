@@ -151,7 +151,7 @@
     />
 
     <!-- VRM アバター（系統図の前面に表示） -->
-    <Avatar :message="avatarBubble" :alert="hasAnomaly" />
+    <Avatar :message="avatarBubble" :alert="hasAnomaly" :thinking="avatarThinking" />
   </div>
 </template>
 
@@ -173,14 +173,17 @@ import { topology } from './topology'
 const CPU_WARN = 85
 const MEM_WARN = 85
 
+// 監視データの自動更新間隔（秒）
+const POLL_INTERVAL_SEC = 10
+
 // アバターのセリフ(Ollama)を取り直す間隔と、吹き出しの表示時間
-const AVATAR_SAY_INTERVAL = 180_000 // 3分ごとに新しいセリフを生成
-const AVATAR_SAY_DURATION = 15_000  // 生成後に吹き出しを出しておく時間
+const AVATAR_SAY_INTERVAL = 45_000 // 45秒ごとに新しいセリフを生成
+const AVATAR_SAY_DURATION = 30_000 // 生成後に吹き出しを出しておく時間
 
 const report = ref(null)
 const loading = ref(false)
 const error = ref(null)
-const countdown = ref(60)
+const countdown = ref(POLL_INTERVAL_SEC)
 const notifyEnabled = ref(false)
 const webhookConfigured = ref(false)
 
@@ -190,6 +193,8 @@ const view = ref('topo')
 // アバターのセリフ(Ollama生成)
 const chatMessage = ref(null)
 const ollamaConfigured = ref(false)
+// Ollama に問い合わせ中か（true の間は「・・・」の吹き出しを出す）
+const avatarThinking = ref(false)
 
 // クリックした対象の詳細モーダル
 const selected = ref(null)
@@ -228,16 +233,45 @@ const onpremHosts = computed(() =>
   (report.value?.onprem_groups || []).flatMap(g => g.hosts || [])
 )
 
-// VM/LXC の初回観測時の稼働状態（vmid -> 初回に running だったか）。
+// VM/LXC が「一度でも running を観測できたか」（"node/vmid" -> true）。
 // 「常時オフのVM」を通知対象から外すためのベースライン。
-const guestBaseline = {}
+// 起動→停止も拾えるよう、初回観測時だけでなく running を見るたびに記録する。
+// 警告表示が再計算されるよう ref で持つ（プレーンなオブジェクトだと computed が追従しない）。
+const guestSeenRunning = ref({})
+
+function guestKey(node, guest) {
+  return `${node}/${guest.vmid}`
+}
+
 function recordGuestBaseline(rep) {
+  const seen = guestSeenRunning.value
+  let changed = false
   for (const n of (rep?.nodes || [])) {
+    if (n.online === false) continue
     for (const g of [...(n.vms || []), ...(n.lxc || [])]) {
-      if (!(g.vmid in guestBaseline)) guestBaseline[g.vmid] = g.status === 'running'
+      const key = guestKey(n.node, g)
+      if (g.status === 'running' && !seen[key]) {
+        seen[key] = true
+        changed = true
+      }
     }
   }
+  if (changed) guestSeenRunning.value = { ...seen }
 }
+
+// 停止した VM/LXC（稼働ノード上で、以前は running だったものだけ）
+const downGuests = computed(() => {
+  const list = []
+  for (const n of nodes.value) {
+    if (n.online === false) continue
+    for (const g of [...(n.vms || []), ...(n.lxc || [])]) {
+      if (g.status !== 'running' && guestSeenRunning.value[guestKey(n.node, g)]) {
+        list.push({ node: n.node, name: g.name, vmid: g.vmid })
+      }
+    }
+  }
+  return list
+})
 
 // --- 画面上部の集計タイル（稼働/総数 の分数表示・系統図と同じアイコン） ---
 const tiles = computed(() => {
@@ -254,10 +288,8 @@ const tiles = computed(() => {
       + (n.lxc || []).filter(pred).length, 0)
   const guestsTotal = countGuests(() => true)
   const guestsRunning = countGuests(g => g.status === 'running')
-  // 初回稼働 → 停止に落ちた VM/LXC（常時オフは除外）
-  const guestsDown = ns.reduce((s, n) => n.online === false ? s : s
-    + [...(n.vms || []), ...(n.lxc || [])]
-        .filter(g => g.status !== 'running' && guestBaseline[g.vmid] === true).length, 0)
+  // 稼働していたのに停止した VM/LXC（常時オフは除外）
+  const guestsDown = downGuests.value.length
   const network = topology.router ? 1 : 0
   return [
     { label: '起動ノード', icon: 'server', value: online, total: totalMon, status: offline > 0 ? 'bad' : 'ok' },
@@ -296,24 +328,17 @@ const warnings = computed(() => {
     if (h.memory?.usage_pct >= MEM_WARN) w.push({ level: 'warn', text: `オンプレ「${h.name}」メモリ使用率が高い (${h.memory.usage_pct}%)` })
   }
 
-  // 警告: VM/LXC のダウン（稼働ノード上のみ。高負荷は通知しない）
-  // 「常時オフのVM」を拾わないよう、初回観測時に稼働していたものが
+  // 重大: VM/LXC のダウン（稼働ノード上のみ。高負荷は通知しない）
+  // 「常時オフのVM」を拾わないよう、一度でも running を観測したものが
   // その後停止した場合だけ通知する（ベースライン比較）。
-  const stopped = []
-  for (const n of nodes.value) {
-    if (n.online === false) continue
-    for (const g of [...(n.vms || []), ...(n.lxc || [])]) {
-      if (g.status !== 'running' && guestBaseline[g.vmid] === true) stopped.push(g.name)
-    }
-  }
-  if (stopped.length) {
-    w.push({ level: 'warn', text: `ダウンしたVM/LXC: ${stopped.join('、')} (${stopped.length}件)` })
+  for (const g of downGuests.value) {
+    w.push({ level: 'critical', text: `VM/LXC「${g.name}」(VMID:${g.vmid} / ${g.node}) が停止しました` })
   }
 
   return w
 })
 
-// --- 異常検知（アバター用: ダウンしたノード / オンプレサーバー） ---
+// --- 異常検知（アバター用: ダウンしたノード / オンプレサーバー / VM・LXC） ---
 const offlineNames = computed(() => {
   const names = []
   for (const n of nodes.value) if (n.online === false) names.push(n.node)
@@ -321,7 +346,13 @@ const offlineNames = computed(() => {
   return names
 })
 
-const hasAnomaly = computed(() => offlineNames.value.length > 0)
+// アバターが反応する対象（ホストのダウンに加え、停止した VM/LXC も含む）
+const alertNames = computed(() => [
+  ...offlineNames.value,
+  ...downGuests.value.map(g => g.name),
+])
+
+const hasAnomaly = computed(() => alertNames.value.length > 0)
 
 // 詳細一覧ビュー: 種類別（Proxmox / オンプレサーバー / VM・LXC）にカードを並べる
 const detailGroups = computed(() => {
@@ -347,9 +378,10 @@ const detailGroups = computed(() => {
 const avatarMessage = computed(() => {
   if (!report.value) return null
   if (!hasAnomaly.value) return null
-  const list = offlineNames.value
+  const list = alertNames.value
   const who = list.length <= 2 ? list.join('・') : `${list.slice(0, 2).join('・')} 他${list.length - 2}件`
-  return `サーバー落ちました！\n(${who})`
+  const what = offlineNames.value.length ? 'サーバー落ちました！' : 'VMが止まりました！'
+  return `${what}\n(${who})`
 })
 
 // 実際に吹き出しへ出す内容: 異常時はアラートを最優先、平常時は Ollama のセリフ
@@ -373,7 +405,12 @@ let sayHideTimer = null
 
 // Ollama にセリフを生成させ、一定時間だけ吹き出しに表示
 async function fetchAvatarSay() {
-  if (!ollamaConfigured.value || hasAnomaly.value) return
+  // 異常時はアラートを出しているので生成しない。多重リクエストも防ぐ。
+  if (!ollamaConfigured.value || hasAnomaly.value || avatarThinking.value) return
+  // 生成中は前のセリフを消して「・・・」の吹き出しに切り替える
+  clearTimeout(sayHideTimer)
+  chatMessage.value = null
+  avatarThinking.value = true
   try {
     const res = await fetch('/api/avatar/say', {
       method: 'POST',
@@ -384,10 +421,12 @@ async function fetchAvatarSay() {
     const data = await res.json()
     if (data.message) {
       chatMessage.value = data.message
-      clearTimeout(sayHideTimer)
       sayHideTimer = setTimeout(() => { chatMessage.value = null }, AVATAR_SAY_DURATION)
     }
-  } catch (_) {}
+  } catch (_) {
+  } finally {
+    avatarThinking.value = false
+  }
 }
 
 // Ollama が使えるか確認し、使えれば定期生成を開始
@@ -442,7 +481,7 @@ async function refresh() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     report.value = await res.json()
     recordGuestBaseline(report.value)
-    countdown.value = 60
+    countdown.value = POLL_INTERVAL_SEC
   } catch (e) {
     error.value = `取得失敗: ${e.message}`
   } finally {
@@ -478,7 +517,7 @@ onMounted(() => {
   refresh()
   fetchNotifyStatus()
   initAvatarSay()
-  pollTimer = setInterval(refresh, 60_000)
+  pollTimer = setInterval(refresh, POLL_INTERVAL_SEC * 1_000)
   countdownTimer = setInterval(() => {
     if (countdown.value > 0) countdown.value--
   }, 1_000)

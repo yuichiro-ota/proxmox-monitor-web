@@ -1,8 +1,12 @@
 <template>
   <div class="avatar-overlay">
     <transition name="bubble">
-      <div v-if="message" class="speech-bubble" :class="{ alert: alert }">
+      <div v-if="message" key="msg" class="speech-bubble" :class="{ alert: alert }">
         {{ message }}
+      </div>
+      <!-- Ollama へ問い合わせ中: 「・・・」を順に光らせる -->
+      <div v-else-if="thinking" key="thinking" class="speech-bubble thinking" aria-label="考え中">
+        <span class="dot-typing"><i></i><i></i><i></i></span>
       </div>
     </transition>
     <canvas ref="canvasEl" class="avatar-canvas"></canvas>
@@ -21,6 +25,8 @@ const props = defineProps({
   message: { type: String, default: null },
   // true のとき吹き出しを警告色にし、表情を心配顔にする
   alert: { type: Boolean, default: false },
+  // true のとき（セリフ生成の問い合わせ中）「・・・」の吹き出しを出す
+  thinking: { type: Boolean, default: false },
   src: { type: String, default: '/avatar.vrm' },
 })
 
@@ -277,6 +283,35 @@ watch(() => props.alert, v => { if (vrm) setEmotion(v ? 'worried' : 'happy') })
 }
 .speech-bubble.alert::after {
   border-top-color: var(--red, #ef4444);
+}
+
+/* 問い合わせ中の「・・・」吹き出し */
+.speech-bubble.thinking {
+  padding: 10px 16px;
+  border-color: var(--border, #999);
+}
+.speech-bubble.thinking::after {
+  border-top-color: var(--border, #999);
+}
+
+.dot-typing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.dot-typing i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted, #888);
+  animation: dot-typing 1.2s ease-in-out infinite;
+}
+.dot-typing i:nth-child(2) { animation-delay: 0.2s; }
+.dot-typing i:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dot-typing {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
 }
 
 .avatar-error {
