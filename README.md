@@ -209,6 +209,20 @@ Proxmox 配下以外のオンプレPC/サーバーは、各機に exporter を�
 - 1エントリあたり `ip` / `hostname` / `display`（表示名）/ `os` / `port`（省略時OS既定）/ `group` を指定。
 - `config/hosts.toml` は実設定のため git 管理外です（`.gitignore`）。
 
+### windows_exporter のメトリクス名
+
+windows_exporter は 0.25 前後で **`cs` コレクタが廃止**され、メトリクス名が変わりました。新旧どちらでも動くよう、`api/onprem.py` では新しい名前を先に、古い名前をフォールバックとして順に探します（`_first_of()`）。
+
+| 用途 | 新（0.25以降 / 動作確認: 0.31.8） | 旧（フォールバック） |
+| --- | --- | --- |
+| 搭載メモリ量 | `windows_memory_physical_total_bytes` | `windows_cs_physical_memory_bytes` |
+| 空きメモリ | `windows_memory_available_bytes` | `windows_os_physical_memory_free_bytes` |
+| 起動時刻 | `windows_system_boot_time_timestamp` | `windows_system_system_up_time` |
+
+古い名前しか見ていないと、**メモリが 0GB / 0%、稼働時間が 0 時間**として表示されます（CPU とディスクはメトリクス名が変わっていないため正常に見え、メモリだけ取れないように見えます）。
+
+> 新しい名前は `memory` / `system` コレクタが有効である必要があります。既定で有効ですが、`--collectors.enabled` を明示指定している場合は `memory` と `system` が含まれているか確認してください。
+
 > 監視スタックを **監視対象のWindows自身のWSL上**で動かすと、WSL2ミラーモードの自己ループにより Windows ホストの exporter に到達できません（OFFLINE表示になる）。スタックは Proxmox 等、対象とは別ホストで動かしてください。
 
 ## 依存関係の管理 (uv)

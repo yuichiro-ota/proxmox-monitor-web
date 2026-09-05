@@ -70,6 +70,8 @@ def parse_metrics(text: str) -> dict[str, list[tuple[dict, float]]]:
             continue
         if "{" in line:
             name, rest = line.split("{", 1)
+            if "}" not in rest:
+                continue  # 壊れた行はスキップ（1行で scrape 全体を落とさない）
             label_str, val_str = rest.rsplit("}", 1)
             labels = {m.group(1): m.group(2) for m in _LABEL_RE.finditer(label_str)}
         else:
@@ -90,6 +92,19 @@ def parse_metrics(text: str) -> dict[str, list[tuple[dict, float]]]:
 def _first(metrics: dict, name: str) -> float | None:
     rows = metrics.get(name)
     return rows[0][1] if rows else None
+
+
+def _first_of(metrics: dict, *names: str) -> float | None:
+    """候補のメトリクス名を順に探して最初に見つかった値を返す。
+
+    windows_exporter はバージョンでメトリクス名が変わる（cs コレクタの廃止など）ため、
+    新しい名前を先に、古い名前をフォールバックとして並べて渡す。
+    """
+    for name in names:
+        value = _first(metrics, name)
+        if value is not None:
+            return value
+    return None
 
 
 def _find(metrics: dict, name: str, label: str, want: str) -> float | None:
@@ -130,8 +145,13 @@ def _cpu(os_name: str, m0: dict, m1: dict) -> dict:
 
 def _memory(os_name: str, m: dict) -> dict:
     if os_name == "windows":
-        total = _first(m, "windows_cs_physical_memory_bytes")
-        avail = _first(m, "windows_memory_available_bytes")
+        # windows_exporter 0.25 以降は cs コレクタが廃止され、搭載メモリ量は
+        # memory コレクタの windows_memory_physical_total_bytes に移った。
+        # 古いバージョン向けに windows_cs_physical_memory_bytes も見る。
+        total = _first_of(m, "windows_memory_physical_total_bytes",
+                          "windows_cs_physical_memory_bytes")
+        avail = _first_of(m, "windows_memory_available_bytes",
+                          "windows_os_physical_memory_free_bytes")
     else:
         total = _first(m, "node_memory_MemTotal_bytes")
         avail = _first(m, "node_memory_MemAvailable_bytes")
@@ -155,7 +175,9 @@ def _disk(os_name: str, m: dict) -> dict | None:
 
 def _uptime_hours(os_name: str, m: dict) -> float:
     if os_name == "windows":
-        boot = _first(m, "windows_system_system_up_time")
+        # 同じく system コレクタで windows_system_system_up_time から改名された
+        boot = _first_of(m, "windows_system_boot_time_timestamp",
+                         "windows_system_system_up_time")
     else:
         boot = _first(m, "node_boot_time_seconds")
     if not boot:
