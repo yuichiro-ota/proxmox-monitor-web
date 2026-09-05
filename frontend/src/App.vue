@@ -195,8 +195,9 @@ const POLL_INTERVAL_SEC = 10
 // アバターのセリフ(Ollama)を取り直す間隔と、吹き出しの表示時間
 const AVATAR_SAY_INTERVAL = 45_000 // 45秒ごとに新しいセリフを生成
 const AVATAR_SAY_DURATION = 30_000 // 生成後に吹き出しを出しておく時間
-// 応答として受け付けるセリフの上限文字数と、既知の表情・モーション名
-const AVATAR_SAY_MAX_LEN = 40
+// 応答として受け付けるセリフの上限文字数（api/avatar.py の MAX_LEN と合わせる）と、
+// 既知の表情・モーション名
+const AVATAR_SAY_MAX_LEN = 52
 const AVATAR_EMOTIONS = ['neutral', 'happy', 'sad', 'worried', 'surprised', 'angry']
 const AVATAR_MOTIONS = ['wave', 'nod', 'tilt', 'cheer', 'surprised', 'think', 'shrug', 'panic', 'bow', 'sway']
 
