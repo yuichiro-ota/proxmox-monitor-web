@@ -107,8 +107,8 @@ body {
 
 /* Topology scroll container is styled in App.vue */
 
-/* Notification toggle */
-.notify-toggle {
+/* ヘッダーのトグルスイッチ（通知 / アバター表示で共用）*/
+.header-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -116,16 +116,16 @@ body {
   user-select: none;
 }
 
-.notify-toggle.no-webhook {
+.header-toggle.disabled {
   opacity: 0.75;
   cursor: not-allowed;
 }
 
-.notify-toggle input {
+.header-toggle input {
   display: none;
 }
 
-.notify-icon {
+.header-toggle .toggle-icon {
   font-size: 0.9rem;
 }
 
@@ -140,7 +140,7 @@ body {
   flex-shrink: 0;
 }
 
-.notify-toggle input:checked ~ .toggle-track {
+.header-toggle input:checked ~ .toggle-track {
   background: rgba(99, 102, 241, 0.3);
   border-color: var(--accent);
 }
@@ -156,7 +156,7 @@ body {
   transition: transform 0.2s, background 0.2s;
 }
 
-.notify-toggle input:checked ~ .toggle-track .toggle-thumb {
+.header-toggle input:checked ~ .toggle-track .toggle-thumb {
   transform: translateX(16px);
   background: var(--accent);
 }

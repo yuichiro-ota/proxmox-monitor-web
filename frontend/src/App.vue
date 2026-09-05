@@ -26,17 +26,25 @@
         <span class="countdown">次の更新まで {{ countdown }}s</span>
 
         <label
-          class="notify-toggle"
-          :class="{ 'no-webhook': !webhookConfigured }"
+          class="header-toggle"
+          :class="{ disabled: !webhookConfigured }"
           :title="notifyTitle"
         >
-          <span class="notify-icon">🔔</span>
+          <span class="toggle-icon">🔔</span>
           <input
             type="checkbox"
             :checked="notifyEnabled"
             :disabled="!webhookConfigured"
             @change="toggleNotify"
           />
+          <span class="toggle-track">
+            <span class="toggle-thumb"></span>
+          </span>
+        </label>
+
+        <label class="header-toggle" :title="avatarTitle">
+          <span class="toggle-icon">🧍</span>
+          <input type="checkbox" v-model="avatarVisible" />
           <span class="toggle-track">
             <span class="toggle-thumb"></span>
           </span>
@@ -151,7 +159,15 @@
     />
 
     <!-- VRM アバター（系統図の前面に表示） -->
-    <Avatar :message="avatarBubble" :alert="hasAnomaly" :thinking="avatarThinking" />
+    <Avatar
+      v-show="avatarVisible"
+      :visible="avatarVisible"
+      :message="avatarBubble"
+      :alert="hasAnomaly"
+      :thinking="avatarThinking"
+      :emotion="avatarEmotion"
+      :motion="avatarMotion"
+    />
   </div>
 </template>
 
@@ -179,6 +195,10 @@ const POLL_INTERVAL_SEC = 10
 // アバターのセリフ(Ollama)を取り直す間隔と、吹き出しの表示時間
 const AVATAR_SAY_INTERVAL = 45_000 // 45秒ごとに新しいセリフを生成
 const AVATAR_SAY_DURATION = 30_000 // 生成後に吹き出しを出しておく時間
+// 応答として受け付けるセリフの上限文字数と、既知の表情・モーション名
+const AVATAR_SAY_MAX_LEN = 40
+const AVATAR_EMOTIONS = ['neutral', 'happy', 'sad', 'worried', 'surprised', 'angry']
+const AVATAR_MOTIONS = ['wave', 'nod', 'tilt', 'cheer', 'surprised', 'think', 'shrug', 'panic', 'bow', 'sway']
 
 const report = ref(null)
 const loading = ref(false)
@@ -190,8 +210,22 @@ const webhookConfigured = ref(false)
 // 表示ビュー: 'topo'（系統図） / 'detail'（詳細一覧）
 const view = ref('topo')
 
-// アバターのセリフ(Ollama生成)
+// アバターを表示するか（ヘッダーのスイッチで切替、ブラウザに保存）
+const AVATAR_VISIBLE_KEY = 'avatarVisible'
+const avatarVisible = ref(loadAvatarVisible())
+
+function loadAvatarVisible() {
+  try {
+    return localStorage.getItem(AVATAR_VISIBLE_KEY) !== '0'
+  } catch (_) {
+    return true // プライベートモード等で読めなくても表示する
+  }
+}
+
+// アバターのセリフ(Ollama生成)。表情・モーションはバックエンドがセリフから判定して返す
 const chatMessage = ref(null)
+const chatEmotion = ref('happy')
+const chatMotion = ref('sway')
 const ollamaConfigured = ref(false)
 // Ollama に問い合わせ中か（true の間は「・・・」の吹き出しを出す）
 const avatarThinking = ref(false)
@@ -389,6 +423,10 @@ const avatarBubble = computed(() =>
   hasAnomaly.value ? avatarMessage.value : chatMessage.value
 )
 
+// 吹き出しの内容に合わせた表情とモーション（異常時は心配顔＋あわてる動き）
+const avatarEmotion = computed(() => (hasAnomaly.value ? 'worried' : chatEmotion.value))
+const avatarMotion = computed(() => (hasAnomaly.value ? 'panic' : chatMotion.value))
+
 // Ollama へ渡す現在の監視状況（セリフの素材）
 function avatarContext() {
   const parts = tiles.value.map(t => `${t.label} ${t.value}/${t.total}`)
@@ -405,8 +443,9 @@ let sayHideTimer = null
 
 // Ollama にセリフを生成させ、一定時間だけ吹き出しに表示
 async function fetchAvatarSay() {
-  // 異常時はアラートを出しているので生成しない。多重リクエストも防ぐ。
-  if (!ollamaConfigured.value || hasAnomaly.value || avatarThinking.value) return
+  // 非表示中や異常時（アラートを出している）は生成しない。多重リクエストも防ぐ。
+  if (!avatarVisible.value || !ollamaConfigured.value) return
+  if (hasAnomaly.value || avatarThinking.value) return
   // 生成中は前のセリフを消して「・・・」の吹き出しに切り替える
   clearTimeout(sayHideTimer)
   chatMessage.value = null
@@ -419,10 +458,13 @@ async function fetchAvatarSay() {
     })
     if (!res.ok) return
     const data = await res.json()
-    if (data.message) {
-      chatMessage.value = data.message
-      sayHideTimer = setTimeout(() => { chatMessage.value = null }, AVATAR_SAY_DURATION)
-    }
+    // バックエンドで検査済みだが、想定外の応答を吹き出しに出さないよう念のため確認する
+    const text = typeof data?.message === 'string' ? data.message.trim() : ''
+    if (!text || text.length > AVATAR_SAY_MAX_LEN) return
+    chatEmotion.value = AVATAR_EMOTIONS.includes(data.emotion) ? data.emotion : 'happy'
+    chatMotion.value = AVATAR_MOTIONS.includes(data.motion) ? data.motion : 'sway'
+    chatMessage.value = text
+    sayHideTimer = setTimeout(() => { chatMessage.value = null }, AVATAR_SAY_DURATION)
   } catch (_) {
   } finally {
     avatarThinking.value = false
@@ -456,6 +498,10 @@ function fitScale() {
   // 縮小後の高さに合わせてラッパー高さを詰める（余白を残さない）
   wrap.style.height = topo.offsetHeight * scale + 'px'
 }
+
+const avatarTitle = computed(() =>
+  avatarVisible.value ? 'アバター: 表示中 (クリックで非表示)' : 'アバター: 非表示 (クリックで表示)'
+)
 
 const notifyTitle = computed(() => {
   if (!webhookConfigured.value) return 'GOOGLE_CHAT_WEBHOOK_URL が未設定です'
@@ -507,6 +553,17 @@ async function toggleNotify() {
     notifyEnabled.value = data.enabled
   } catch (_) {}
 }
+
+// アバターの表示状態を保存。再表示したら新しいセリフを取りにいく
+watch(avatarVisible, v => {
+  try { localStorage.setItem(AVATAR_VISIBLE_KEY, v ? '1' : '0') } catch (_) {}
+  if (!v) {
+    clearTimeout(sayHideTimer)
+    chatMessage.value = null
+  } else if (ollamaConfigured.value) {
+    setTimeout(fetchAvatarSay, 1500)
+  }
+})
 
 // レポート更新でカード数が変わったら再フィット
 watch(report, () => nextTick(fitScale))

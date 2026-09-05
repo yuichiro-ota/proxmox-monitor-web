@@ -118,12 +118,26 @@ def avatar_status():
 
 @app.post("/api/avatar/say")
 def avatar_say(payload: dict = Body(default={})):
-    """監視状況(context)を踏まえた短いセリフを Ollama で生成して返す。"""
-    context = str(payload.get("context", ""))[:500]
-    message = generate_say(context)
-    if not message:
-        raise HTTPException(status_code=503, detail="Ollama unavailable")
-    return {"message": message}
+    """監視状況(context)を踏まえた短いセリフを Ollama で生成して返す。
+
+    戻り値には吹き出しの本文に加え、表情(emotion)と再生するモーション(motion)が入る。
+    生成に失敗した場合や、バリデーションに通るセリフが得られなかった場合は 503。
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="payload must be an object")
+    raw_context = payload.get("context", "")
+    if not isinstance(raw_context, str):
+        raise HTTPException(status_code=422, detail="context must be a string")
+    # 改行・制御文字を潰してから長さを制限（プロンプトの構造を壊さないため）
+    context = " ".join(raw_context.split())[:500]
+
+    if not ollama_configured():
+        raise HTTPException(status_code=503, detail="Ollama not configured")
+
+    result = generate_say(context)
+    if not result:
+        raise HTTPException(status_code=503, detail="Ollama unavailable or response rejected")
+    return result
 
 
 if STATIC_DIR.exists():
