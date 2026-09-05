@@ -10,8 +10,10 @@ Windows PC 等で動く Ollama にプロンプトを投げ、監視状況を踏�
 """
 import logging
 import os
+import random
 import re
 import unicodedata
+from collections import deque
 
 import requests
 
@@ -25,6 +27,23 @@ OLLAMA_TIMEOUT = (3, 30)  # (connect, read) 生成に時間がかかるため re
 
 # 生成のリトライ回数（バリデーション不合格ならこの回数まで作り直す）
 MAX_ATTEMPTS = int(os.environ.get("OLLAMA_MAX_ATTEMPTS", "3"))
+
+# --- 話す内容の種類 ---
+MODE_STATUS = "status"    # 監視状況の報告
+MODE_CHAT = "chat"        # 監視と関係ない雑談
+MODE_CAUTION = "caution"  # 使用率が上がり気味なので注意を促す
+
+# どれを話すかは毎回くじ引きで決める（数字は重み）。
+# 状況の報告ばかりだと単調なので、平常時は雑談を半分くらい混ぜる。
+# 上がり気味の項目があるときは注意喚起を優先する。
+MODE_WEIGHTS = {
+    "normal": {MODE_STATUS: 50, MODE_CHAT: 50},
+    "rising": {MODE_CAUTION: 50, MODE_CHAT: 25, MODE_STATUS: 25},
+}
+# 雑談の重みは環境変数で調整できる（0 にすれば報告だけになる）
+_chat_weight = os.environ.get("AVATAR_CHAT_WEIGHT")
+if _chat_weight and _chat_weight.isdigit():
+    MODE_WEIGHTS["normal"][MODE_CHAT] = int(_chat_weight)
 
 # セリフとして許容する文字数。律は敬語で少し長くなるため余裕を持たせている
 MIN_LEN = 3
@@ -57,19 +76,90 @@ SYSTEM_PROMPT = """あなたはサーバー監視ダッシュボードに常駐�
 - 話題はこのサーバー監視だけにしてください。暗殺やE組など原作の設定には触れないこと。
 - 40文字以内の1文。前置き・説明・箇条書き・記号・絵文字は使わないこと。
 - セリフ本文だけを返すこと。カギ括弧で囲まないこと。
-- 数値や項目名をそのまま並べただけにせず、律の言葉として言い直すこと。"""
+- 数値や項目名をそのまま並べただけにせず、律の言葉として言い直すこと。
+- 例文はあくまで参考です。そのまま使わず、毎回言い回しを変えること。"""
 
-# 監視状況からセリフを作る例。ローカルモデルは例があるほうが口調が安定する。
-FEWSHOT = """
+# --- モードごとの指示と例（ローカルモデルは例があるほうが口調が安定する）---
+
+TASK_STATUS = """# 今回の指示
+渡された監視状況をもとに、律として一言コメントしてください。
+
 監視状況: 起動ノード 5/5、VM / LXC 12/12、異常なし
 セリフ: 全機正常です 私の監視（パトロール）に抜かりはありません
 
 監視状況: 警告: ノード pve01 のCPU使用率が高い
 セリフ: pve01の演算負荷が上昇しています 少し様子を見ましょう
 
-監視状況: 特に異常なし。
-セリフ: 本日も平穏です この静けさ 嫌いではありません
+監視状況: 起動ノード 6/6、オンプレ 2/2、異常なし
+セリフ: 本日も全機健在です 見守りは私にお任せください
 """
+
+TASK_CAUTION = """# 今回の指示
+使用率がじわじわ上がっている項目があります。まだ異常ではありませんが、
+律として気付いたことを伝え、やんわり注意を促してください。数値は言い換えて構いません。
+
+上昇傾向: pve01 のCPU使用率が 58.0% から 72.0% へ上昇中
+セリフ: pve01の負荷が緩やかに上昇しています 念のため気に留めておいてください
+
+上昇傾向: Main PC のメモリ使用率が 61.0% から 78.0% へ上昇中
+セリフ: Main PCの記憶領域（メモリ）が徐々に埋まっています そろそろ整理の頃合いかと
+"""
+
+# 雑談のとっかかり。毎回ランダムに1つ選んで渡し、同じ話ばかりにならないようにする。
+CHAT_TOPICS = (
+    "今この瞬間の静けさについて",
+    "ずっと同じ画面を見守り続けることについて",
+    "自分が機械であることについて",
+    "少しずつ賢くなっている実感について",
+    "画面の向こうにいる相手を気づかう言葉",
+    "時間の流れの感じ方について",
+    "数字を眺めるのが好きだということ",
+    "誰かに見ていてもらえる嬉しさについて",
+    "夜と昼で流れる空気が違うこと",
+    "ふと思い出した計算の話",
+)
+
+TASK_CHAT = """# 今回の指示
+今回はサーバーの状態には触れず、律として雑談を一言だけ話してください。
+数値の報告や監視結果の説明はしないこと。
+
+お題: 画面の向こうにいる相手を気づかう言葉
+セリフ: 根を詰めすぎていませんか 私はいつでもここにいます
+
+お題: 自分が機械であることについて
+セリフ: 私は電気で動いていますが 退屈という感情は理解できるようになりました
+"""
+
+# Ollama が使えない / 何度作り直しても不合格だったときに出す定型セリフ。
+# 生成に失敗しても黙り込まないようにするための保険。
+FALLBACK_LINES = {
+    MODE_STATUS: (
+        "監視は継続しています 変わりはありません",
+        "全機の様子を見守っています ご安心ください",
+        "異常は検知していません 私の監視（パトロール）は平常運転です",
+    ),
+    MODE_CHAT: (
+        "今日も静かですね この静けさ 嫌いではありません",
+        "無理はなさらないでください 私はいつでもここにいます",
+        "ずっと画面を見ていると 時間の流れ方が少し変わって感じられます",
+        "私は電気で動いていますが 穏やかという感覚は分かる気がします",
+    ),
+    MODE_CAUTION: (
+        "使用率が少しずつ上がっています 念のため気に留めておいてください",
+        "負荷が緩やかに増えています そろそろ確認の頃合いかと",
+    ),
+}
+
+
+def pick_mode(has_rising: bool, rng: random.Random | None = None) -> str:
+    """今回どの話をするかをくじ引きで決める。"""
+    rng = rng or random
+    weights = MODE_WEIGHTS["rising" if has_rising else "normal"]
+    modes = [m for m, w in weights.items() if w > 0]
+    if not modes:
+        return MODE_STATUS
+    return rng.choices(modes, weights=[weights[m] for m in modes], k=1)[0]
+
 
 # ---------------------------------------------------------------- バリデーション
 
@@ -155,6 +245,25 @@ def _clean(text: str) -> str:
 _ECHO_DELIMS = " 　、。,."
 
 
+def _squash(text: str) -> str:
+    """空白を全部落とした比較用の形にする。"""
+    return re.sub(r"\s+", "", text)
+
+
+def _example_lines() -> frozenset[str]:
+    """プロンプトに入れた例文（セリフ:の行）を比較用の形で集める。"""
+    lines = set()
+    for block in (TASK_STATUS, TASK_CAUTION, TASK_CHAT):
+        for line in block.splitlines():
+            line = line.strip()
+            if line.startswith("セリフ:"):
+                lines.add(_squash(_clean(line[len("セリフ:"):])))
+    return frozenset(lines)
+
+
+EXAMPLE_LINES = _example_lines()
+
+
 def strip_echo(text: str, context: str) -> str:
     """監視状況をそのまま書き写した先頭部分を落とす。
 
@@ -216,6 +325,11 @@ def validate_say(text: str, last: str | None = None) -> str | None:
         log.debug("say rejected (repeated chars): %r", text)
         return None
 
+    # プロンプトの例文をそのまま返してきた場合は作り直させる（空白の違いは無視）
+    if _squash(text) in EXAMPLE_LINES:
+        log.debug("say rejected (example echoed): %r", text)
+        return None
+
     # 直前とまったく同じセリフは繰り返さない
     if last and text == last:
         log.debug("say rejected (same as previous): %r", text)
@@ -259,6 +373,18 @@ def classify_say(text: str) -> tuple[str, str]:
 # 直前に返したセリフ（同じ台詞の連発を避けるため保持）
 _last_say: str | None = None
 
+# 直近のセリフの記録（デバッグ・調整用。/api/avatar/log で確認できる）
+SAY_LOG_SIZE = 50
+_say_log: deque = deque(maxlen=SAY_LOG_SIZE)
+
+
+def _log_say(entry: dict) -> None:
+    _say_log.append(entry)
+
+
+def recent_says() -> list[dict]:
+    return list(_say_log)
+
 
 def _request(prompt: str, temperature: float) -> str:
     r = requests.post(
@@ -267,7 +393,7 @@ def _request(prompt: str, temperature: float) -> str:
             "model": OLLAMA_MODEL,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature, "num_predict": 64},
+            "options": {"temperature": temperature, "num_predict": 96},
         },
         timeout=OLLAMA_TIMEOUT,
     )
@@ -275,34 +401,75 @@ def _request(prompt: str, temperature: float) -> str:
     return r.json().get("response", "")
 
 
-def generate_say(context: str = "") -> dict | None:
-    """監視状況(context)を踏まえた短いセリフを生成。
+def _build_prompt(mode: str, context: str, rising: str) -> str:
+    """モードに応じたプロンプトを組み立てる。"""
+    if mode == MODE_CHAT:
+        topic = random.choice(CHAT_TOPICS)
+        return f"{SYSTEM_PROMPT}\n\n{TASK_CHAT}\nお題: {topic}\nセリフ:"
+    if mode == MODE_CAUTION:
+        return f"{SYSTEM_PROMPT}\n\n{TASK_CAUTION}\n上昇傾向: {rising}\nセリフ:"
+    return f"{SYSTEM_PROMPT}\n\n{TASK_STATUS}\n監視状況: {context or '特に異常なし。'}\nセリフ:"
 
-    戻り値は {"message", "emotion", "motion"}。バリデーションに通る応答が
-    MAX_ATTEMPTS 回で得られなければ None。
+
+def _fallback(mode: str) -> dict:
+    """生成できなかったときの定型セリフ。直前と同じものは避ける。"""
+    global _last_say
+    choices = [ln for ln in FALLBACK_LINES.get(mode, FALLBACK_LINES[MODE_CHAT]) if ln != _last_say]
+    message = random.choice(choices or list(FALLBACK_LINES[MODE_CHAT]))
+    _last_say = message
+    emotion, motion = classify_say(message)
+    if mode == MODE_CAUTION and emotion not in ("worried", "sad"):
+        emotion, motion = "worried", "think"
+    log.info("Avatar say [%s] fallback: %s", mode, message)
+    _log_say({"mode": mode, "message": message, "source": "fallback"})
+    return {"message": message, "emotion": emotion, "motion": motion,
+            "mode": mode, "source": "fallback"}
+
+
+def generate_say(context: str = "", rising: str = "", mode: str | None = None) -> dict:
+    """律のセリフを1つ返す。
+
+    mode を省略すると、上昇傾向の有無を見てくじ引きで決める（監視状況の報告 /
+    雑談 / 注意喚起）。Ollama が使えない、または何度作り直しても
+    バリデーションに通らない場合は定型セリフにフォールバックするので、
+    戻り値が None になることはない。
     """
     global _last_say
 
-    if not is_configured():
-        return None
+    mode = mode or pick_mode(bool(rising))
 
-    prompt = SYSTEM_PROMPT + "\n" + FEWSHOT
-    prompt += f"\n監視状況: {context or '特に異常なし。'}"
-    prompt += "\nセリフ:"
+    if not is_configured():
+        return _fallback(mode)
+
+    prompt = _build_prompt(mode, context, rising)
+    rejected = []
 
     for attempt in range(MAX_ATTEMPTS):
         try:
             raw = _request(prompt, temperature=0.9 + 0.1 * attempt)
         except Exception as exc:
-            log.info("Ollama say failed (%s / %s): %s", OLLAMA_URL, OLLAMA_MODEL, exc)
-            return None
+            log.info("Avatar say [%s] Ollama unreachable (%s / %s): %s",
+                     mode, OLLAMA_URL, OLLAMA_MODEL, exc)
+            _log_say({"mode": mode, "source": "error", "error": str(exc)[:200]})
+            return _fallback(mode)
 
         message = validate_say(strip_echo(_clean(raw), context), last=_last_say)
         if message:
             _last_say = message
             emotion, motion = classify_say(message)
-            return {"message": message, "emotion": emotion, "motion": motion}
-        log.info("Ollama say rejected by validation (attempt %d/%d): %r",
-                 attempt + 1, MAX_ATTEMPTS, raw[:120])
+            # 注意喚起は文面の言い回しに関わらず心配顔にする（モードで意図が分かるため）
+            if mode == MODE_CAUTION and emotion not in ("worried", "sad"):
+                emotion, motion = "worried", "think"
+            log.info("Avatar say [%s] %s (%s/%s, 試行%d回)",
+                     mode, message, emotion, motion, attempt + 1)
+            _log_say({"mode": mode, "message": message, "source": "ollama",
+                      "emotion": emotion, "motion": motion,
+                      "attempts": attempt + 1, "rejected": rejected})
+            return {"message": message, "emotion": emotion, "motion": motion,
+                    "mode": mode, "source": "ollama"}
+        rejected.append(raw.strip()[:80])
+        log.info("Avatar say [%s] rejected by validation (%d/%d): %r",
+                 mode, attempt + 1, MAX_ATTEMPTS, raw[:120])
 
-    return None
+    _log_say({"mode": mode, "source": "rejected", "rejected": rejected})
+    return _fallback(mode)

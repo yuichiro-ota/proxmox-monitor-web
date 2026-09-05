@@ -7,7 +7,8 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .avatar import OLLAMA_MODEL, OLLAMA_URL, generate_say
+from . import usage
+from .avatar import OLLAMA_MODEL, OLLAMA_URL, generate_say, recent_says
 from .avatar import is_configured as ollama_configured
 from .collector import fetch_report
 from .notifier import is_configured, send_anomaly, send_scheduled, send_startup
@@ -28,6 +29,7 @@ async def _anomaly_monitor():
             continue
         try:
             report = fetch_report()
+            usage.record(report)
             new_snap = make_snapshot(report)
             if app_state.last_snapshot:
                 anomalies = detect_anomalies(app_state.last_snapshot, new_snap)
@@ -81,7 +83,10 @@ app.add_middleware(
 @app.get("/api/latest")
 def get_latest():
     try:
-        return fetch_report()
+        report = fetch_report()
+        # 「上がり気味」の判定に使う履歴を残す（間隔が短いときは中で間引かれる）
+        usage.record(report)
+        return report
     except Exception as exc:
         log.error("Failed to fetch from Proxmox: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc))
@@ -112,16 +117,26 @@ def toggle_notify():
 
 @app.get("/api/avatar/status")
 def avatar_status():
-    """アバターのセリフ生成(Ollama)が使えるか。フロントはこれを見て定期取得する。"""
-    return {"configured": ollama_configured(), "url": OLLAMA_URL, "model": OLLAMA_MODEL}
+    """アバターのセリフ機能の状態。
+
+    configured は Ollama の設定有無。未設定でも定型セリフは話すので、
+    フロントは常にセリフの定期取得を行ってよい（always_talks）。
+    """
+    return {
+        "configured": ollama_configured(),
+        "always_talks": True,
+        "url": OLLAMA_URL,
+        "model": OLLAMA_MODEL,
+    }
 
 
 @app.post("/api/avatar/say")
 def avatar_say(payload: dict = Body(default={})):
-    """監視状況(context)を踏まえた短いセリフを Ollama で生成して返す。
+    """アバターのセリフを1つ返す。
 
-    戻り値には吹き出しの本文に加え、表情(emotion)と再生するモーション(motion)が入る。
-    生成に失敗した場合や、バリデーションに通るセリフが得られなかった場合は 503。
+    戻り値は本文・表情(emotion)・モーション(motion)・話の種類(mode)。
+    Ollama が未設定/到達不可でも定型セリフを返すので、黙り込むことはない
+    （その場合 source が "fallback" になる）。
     """
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="payload must be an object")
@@ -131,13 +146,19 @@ def avatar_say(payload: dict = Body(default={})):
     # 改行・制御文字を潰してから長さを制限（プロンプトの構造を壊さないため）
     context = " ".join(raw_context.split())[:500]
 
-    if not ollama_configured():
-        raise HTTPException(status_code=503, detail="Ollama not configured")
+    # 話す内容の種類（報告 / 雑談 / 注意喚起）は generate_say がくじ引きで決める。
+    # 上がり気味の項目があるときだけ注意喚起が候補に入る。
+    mode = payload.get("mode")
+    if mode is not None and not isinstance(mode, str):
+        raise HTTPException(status_code=422, detail="mode must be a string")
 
-    result = generate_say(context)
-    if not result:
-        raise HTTPException(status_code=503, detail="Ollama unavailable or response rejected")
-    return result
+    return generate_say(context, rising=usage.summary(), mode=mode)
+
+
+@app.get("/api/avatar/log")
+def avatar_log():
+    """直近のセリフと、使用率の履歴・上昇傾向。調整とデバッグ用。"""
+    return {"says": recent_says(), "usage": usage.stats()}
 
 
 if STATIC_DIR.exists():

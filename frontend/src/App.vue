@@ -227,6 +227,8 @@ function loadAvatarVisible() {
 const chatMessage = ref(null)
 const chatEmotion = ref('happy')
 const chatMotion = ref('sway')
+// セリフの定期取得を行うか。Ollama 未設定でも定型セリフが返るので通常は true
+const avatarSayEnabled = ref(false)
 const ollamaConfigured = ref(false)
 // Ollama に問い合わせ中か（true の間は「・・・」の吹き出しを出す）
 const avatarThinking = ref(false)
@@ -445,7 +447,7 @@ let sayHideTimer = null
 // Ollama にセリフを生成させ、一定時間だけ吹き出しに表示
 async function fetchAvatarSay() {
   // 非表示中や異常時（アラートを出している）は生成しない。多重リクエストも防ぐ。
-  if (!avatarVisible.value || !ollamaConfigured.value) return
+  if (!avatarVisible.value || !avatarSayEnabled.value) return
   if (hasAnomaly.value || avatarThinking.value) return
   // 生成中は前のセリフを消して「・・・」の吹き出しに切り替える
   clearTimeout(sayHideTimer)
@@ -472,13 +474,18 @@ async function fetchAvatarSay() {
   }
 }
 
-// Ollama が使えるか確認し、使えれば定期生成を開始
+// セリフ機能の状態を確認して定期生成を開始する。
+// Ollama 未設定でもバックエンドが定型セリフを返すので、基本は常に開始する。
 async function initAvatarSay() {
   try {
     const res = await fetch('/api/avatar/status')
-    if (res.ok) ollamaConfigured.value = (await res.json()).configured
+    if (res.ok) {
+      const st = await res.json()
+      ollamaConfigured.value = !!st.configured
+      avatarSayEnabled.value = !!(st.always_talks || st.configured)
+    }
   } catch (_) {}
-  if (!ollamaConfigured.value) return
+  if (!avatarSayEnabled.value) return
   sayTimer = setInterval(fetchAvatarSay, AVATAR_SAY_INTERVAL)
   setTimeout(fetchAvatarSay, 5000) // 初回は起動直後に一度
 }
@@ -561,7 +568,7 @@ watch(avatarVisible, v => {
   if (!v) {
     clearTimeout(sayHideTimer)
     chatMessage.value = null
-  } else if (ollamaConfigured.value) {
+  } else if (avatarSayEnabled.value) {
     setTimeout(fetchAvatarSay, 1500)
   }
 })
